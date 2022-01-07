@@ -1,28 +1,26 @@
 package handlers
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
-	"time"
 
 	"github.com/PatrikOlin/neo-burton/db"
 	"github.com/go-chi/chi/v5"
 )
 
+type ToggleResponse struct {
+	Status string `json:"status"`
+}
+
 func SignIn(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-type", "application/json")
 	id := chi.URLParam(r, "id")
-	isHex := r.URL.Query().Get("hex")
+	toMap := r.URL.Query().Has("map")
 
-	fmt.Println(isHex)
 	var err error
-	if isHex == "true" {
-		err = signInWithHex(id)
-	} else {
-		err = signIn(id)
-	}
+	status, err := signIn(id, toMap)
 
 	if err != nil {
 		HandleHTTPError(w, err)
@@ -30,40 +28,35 @@ func SignIn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode("Signed in")
+	if toMap {
+		json.NewEncoder(w).Encode(status)
+	} else {
+		json.NewEncoder(w).Encode(ToggleResponse{Status: "SIGNED_IN"})
+	}
+
 }
 
-func signIn(id string) error {
-	stmt := "INSERT INTO checkins (employee_id, checkin_time) VALUES ($1, $2)"
-	_, err := db.DBClient.Exec(stmt, id, time.Now())
+func signIn(id string, toMap bool) (ToggleResponse, error) {
+	// stmt := "INSERT INTO checkins (employee_id, checkin_time) VALUES ($1, $2)"
+	// _, err := db.DBClient.Exec(stmt, id, time.Now())
 
-	if err != nil {
-		return err
+	// if err != nil {
+	// 	return err
+	// }
+
+	var status ToggleResponse
+	var err error
+	if toMap {
+		status, err = toggleMapSignedIn(id)
+
+		if err != nil {
+			return status, err
+		}
+
+		fmt.Println("användare loggade in! " + id)
 	}
 
-	return nil
-}
-
-func signInWithHex(hex string) error {
-	id, err := getUserID(hex)
-	if err != nil {
-		return err
-	}
-
-	stmt := "INSERT INTO checkins (employee_id, checkin_time) VALUES ($1, $2)"
-	_, err = db.DBClient.Exec(stmt, id, time.Now())
-
-	if err != nil {
-		return err
-	}
-
-	err = signInToMap(id)
-
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return status, nil
 }
 
 func getUserID(hex string) (string, error) {
@@ -77,13 +70,31 @@ func getUserID(hex string) (string, error) {
 	return id, nil
 }
 
-func signInToMap(id string) error {
-	url := "https://blmap.blinfo.se/api/map/signIn/" + id
-	_, err := http.Post(url, "application/json", nil)
+func toggleMapSignedIn(id string) (ToggleResponse, error) {
+	url := "https://blmap.blinfo.se/api/map/signInOrOut/" + id
+	client := &http.Client{}
+	req, err := http.NewRequest(http.MethodPut, url, nil)
+	var resp ToggleResponse
 
 	if err != nil {
-		return err
+		return resp, err
 	}
 
-	return nil
+	res, err := client.Do(req)
+	if err != nil {
+		return resp, err
+	}
+
+	defer res.Body.Close()
+
+	body, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		return resp, err
+	}
+
+	if err = json.Unmarshal(body, &resp); err != nil {
+		return resp, err
+	}
+
+	return resp, nil
 }
